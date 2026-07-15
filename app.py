@@ -26,7 +26,7 @@ SCHWAB_TOKEN_URL = "https://api.schwabapi.com/v1/oauth/token"
 app = Flask(__name__)
 app.secret_key = os.environ.get("SECRET_KEY", os.urandom(24))
 
-CONFIG_PATH = Path("config.json")
+CONFIG_PATH = Path(os.environ.get("CONFIG_PATH", "config.json"))
 config: dict = {}
 if CONFIG_PATH.exists():
     with open(CONFIG_PATH) as f:
@@ -57,23 +57,35 @@ def get_trader() -> CopyTrader | None:
     return _trader
 
 
-def init_trader() -> CopyTrader | None:
-    global _trader
+def get_client():
+    """Build a Schwab client from the saved token, if credentials and a token exist."""
+    if not config.get("app_key") or not config.get("app_secret"):
+        return None
     token_path = config.get("token_path", "schwab_token.json")
     if not Path(token_path).exists():
         return None
     try:
-        client = schwab.auth.client_from_token_file(
-            token_path,
-            config["app_key"],
-            config["app_secret"],
+        return schwab.auth.client_from_token_file(
+            token_path, config["app_key"], config["app_secret"],
         )
-        with _trader_lock:
-            _trader = CopyTrader(config, client, activity_log)
-        return _trader
     except Exception as e:
-        activity_log.append("ERROR", f"Failed to initialise trader: {e}")
+        activity_log.append("ERROR", f"Failed to load Schwab client: {e}")
         return None
+
+
+def save_config():
+    with open(CONFIG_PATH, "w") as f:
+        json.dump(config, f, indent=2)
+
+
+def init_trader() -> CopyTrader | None:
+    global _trader
+    client = get_client()
+    if not client or not config.get("leader_account_hash") or not config.get("follower_account_hash"):
+        return None
+    with _trader_lock:
+        _trader = CopyTrader(config, client, activity_log)
+    return _trader
 
 
 # Try to connect on startup if a token already exists
@@ -121,6 +133,8 @@ def logout():
 @app.route("/auth/connect")
 @login_required
 def auth_connect():
+    if not config.get("app_key") or not config.get("redirect_uri"):
+        return redirect(url_for("settings"))
     oauth = OAuth2Session(config["app_key"], redirect_uri=config["redirect_uri"])
     url, state = oauth.create_authorization_url(SCHWAB_AUTH_URL)
     flask_session["oauth_state"] = state
@@ -146,6 +160,47 @@ def oauth_callback():
     init_trader()
     activity_log.append("INFO", "Schwab account connected successfully.")
     return redirect(url_for("dashboard"))
+
+
+# ---------------------------------------------------------------------------
+# Settings
+# ---------------------------------------------------------------------------
+
+@app.route("/settings", methods=["GET", "POST"])
+@login_required
+def settings():
+    if request.method == "POST":
+        for key in ("app_key", "redirect_uri", "leader_account_hash", "follower_account_hash"):
+            value = request.form.get(key, "").strip()
+            if value:
+                config[key] = value
+        app_secret = request.form.get("app_secret", "").strip()
+        if app_secret:
+            config["app_secret"] = app_secret
+        save_config()
+        init_trader()
+        activity_log.append("INFO", "Settings updated.")
+        return redirect(url_for("settings"))
+
+    error = None
+    accounts = []
+    client = get_client()
+    if client:
+        try:
+            resp = client.get_account_numbers()
+            resp.raise_for_status()
+            accounts = resp.json()
+        except Exception as e:
+            error = f"Could not fetch accounts: {e}"
+
+    return render_template(
+        "settings.html",
+        config=config,
+        accounts=accounts,
+        error=error,
+        has_secret=bool(config.get("app_secret")),
+        trader_ready=get_trader() is not None,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -222,8 +277,7 @@ def api_multiplier():
     if t:
         t.set_multiplier(value)
     config["size_multiplier"] = value
-    with open(CONFIG_PATH, "w") as f:
-        json.dump(config, f, indent=2)
+    save_config()
     return jsonify({"multiplier": value})
 
 
