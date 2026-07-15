@@ -1,0 +1,240 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Copy Trader</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-950 text-gray-100 min-h-screen">
+
+  <!-- Header -->
+  <header class="bg-gray-900 border-b border-gray-800 px-6 py-4 flex items-center justify-between">
+    <h1 class="text-lg font-bold tracking-tight">Schwab Copy Trader</h1>
+    <div class="flex items-center gap-4">
+      <span id="conn-badge" class="text-xs font-medium px-2.5 py-1 rounded-full
+        {{ 'bg-green-900 text-green-300' if connected else 'bg-red-900 text-red-300' }}">
+        {{ 'Connected' if connected else 'Not Connected' }}
+      </span>
+      {% if not connected %}
+        <a href="/auth/connect"
+           class="text-sm bg-blue-600 hover:bg-blue-500 text-white px-4 py-1.5 rounded-lg transition-colors">
+          Connect Schwab
+        </a>
+      {% endif %}
+      <a href="/logout" class="text-sm text-gray-500 hover:text-gray-300 transition-colors">Logout</a>
+    </div>
+  </header>
+
+  <main class="max-w-7xl mx-auto px-6 py-6 space-y-6">
+
+    <!-- Controls -->
+    <section class="bg-gray-900 rounded-xl border border-gray-800 p-5 flex flex-wrap items-center gap-6">
+      <!-- Status + Start/Stop -->
+      <div class="flex items-center gap-3">
+        <span id="status-dot" class="w-3 h-3 rounded-full {{ 'bg-green-400' if running else 'bg-gray-600' }}"></span>
+        <span id="status-label" class="text-sm font-medium {{ 'text-green-300' if running else 'text-gray-400' }}">
+          {{ 'Running' if running else 'Stopped' }}
+        </span>
+      </div>
+      <div class="flex gap-2">
+        <button id="btn-start"
+          onclick="controlTrader('start')"
+          class="px-4 py-1.5 text-sm rounded-lg bg-green-700 hover:bg-green-600 text-white
+                 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+          {{ 'disabled' if running or not connected }}>
+          Start
+        </button>
+        <button id="btn-stop"
+          onclick="controlTrader('stop')"
+          class="px-4 py-1.5 text-sm rounded-lg bg-red-700 hover:bg-red-600 text-white
+                 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+          {{ 'disabled' if not running }}>
+          Stop
+        </button>
+      </div>
+
+      <!-- Divider -->
+      <div class="h-8 w-px bg-gray-700"></div>
+
+      <!-- Multiplier -->
+      <div class="flex items-center gap-3">
+        <label class="text-sm text-gray-400">Follower multiplier</label>
+        <input id="multiplier-input" type="number" min="0.1" step="0.1"
+          value="{{ multiplier }}"
+          class="w-20 bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5
+                 text-sm text-white focus:outline-none focus:border-blue-500">
+        <button onclick="setMultiplier()"
+          class="px-4 py-1.5 text-sm rounded-lg bg-blue-700 hover:bg-blue-600 text-white transition-colors">
+          Set
+        </button>
+        <span id="multiplier-saved" class="text-xs text-green-400 hidden">Saved</span>
+      </div>
+
+      <!-- Positions refresh -->
+      <button onclick="loadPositions()"
+        class="ml-auto px-4 py-1.5 text-sm rounded-lg border border-gray-700
+               hover:border-gray-500 text-gray-300 transition-colors">
+        ↻ Refresh Positions
+      </button>
+    </section>
+
+    <!-- Positions -->
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+      <!-- Leader -->
+      <section class="bg-gray-900 rounded-xl border border-gray-800 p-5">
+        <h2 class="text-sm font-semibold text-gray-300 mb-3 uppercase tracking-wide">Leader Positions</h2>
+        <div id="leader-positions">
+          <p class="text-gray-500 text-sm">Loading…</p>
+        </div>
+      </section>
+
+      <!-- Follower -->
+      <section class="bg-gray-900 rounded-xl border border-gray-800 p-5">
+        <h2 class="text-sm font-semibold text-gray-300 mb-3 uppercase tracking-wide">Follower Positions</h2>
+        <div id="follower-positions">
+          <p class="text-gray-500 text-sm">Loading…</p>
+        </div>
+      </section>
+    </div>
+
+    <!-- Activity Log -->
+    <section class="bg-gray-900 rounded-xl border border-gray-800 p-5">
+      <h2 class="text-sm font-semibold text-gray-300 mb-3 uppercase tracking-wide">Activity Log</h2>
+      <div id="log-container"
+           class="font-mono text-xs space-y-0.5 max-h-72 overflow-y-auto">
+        <p class="text-gray-500">Loading…</p>
+      </div>
+    </section>
+
+  </main>
+
+  <script>
+    // -----------------------------------------------------------------------
+    // Trader controls
+    // -----------------------------------------------------------------------
+    async function controlTrader(action) {
+      await fetch(`/api/${action}`, { method: 'POST' });
+      refreshStatus();
+    }
+
+    async function setMultiplier() {
+      const value = parseFloat(document.getElementById('multiplier-input').value);
+      if (isNaN(value) || value <= 0) return;
+      await fetch('/api/multiplier', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ value }),
+      });
+      const saved = document.getElementById('multiplier-saved');
+      saved.classList.remove('hidden');
+      setTimeout(() => saved.classList.add('hidden'), 2000);
+    }
+
+    // -----------------------------------------------------------------------
+    // Status polling
+    // -----------------------------------------------------------------------
+    async function refreshStatus() {
+      const res = await fetch('/api/status');
+      const data = await res.json();
+
+      // Connection badge
+      const badge = document.getElementById('conn-badge');
+      badge.textContent = data.connected ? 'Connected' : 'Not Connected';
+      badge.className = `text-xs font-medium px-2.5 py-1 rounded-full ${
+        data.connected ? 'bg-green-900 text-green-300' : 'bg-red-900 text-red-300'
+      }`;
+
+      // Running indicator
+      const dot = document.getElementById('status-dot');
+      const label = document.getElementById('status-label');
+      dot.className = `w-3 h-3 rounded-full ${data.running ? 'bg-green-400' : 'bg-gray-600'}`;
+      label.textContent = data.running ? 'Running' : 'Stopped';
+      label.className = `text-sm font-medium ${data.running ? 'text-green-300' : 'text-gray-400'}`;
+
+      // Buttons
+      document.getElementById('btn-start').disabled = data.running || !data.connected;
+      document.getElementById('btn-stop').disabled = !data.running;
+
+      // Log
+      renderLog(data.log);
+    }
+
+    function renderLog(entries) {
+      const container = document.getElementById('log-container');
+      if (!entries || entries.length === 0) {
+        container.innerHTML = '<p class="text-gray-500">No activity yet.</p>';
+        return;
+      }
+      const colours = { INFO: 'text-gray-300', WARNING: 'text-yellow-400', ERROR: 'text-red-400' };
+      container.innerHTML = [...entries].reverse().map(e => `
+        <div class="flex gap-2">
+          <span class="text-gray-600 shrink-0">${e.time}</span>
+          <span class="${colours[e.level] || 'text-gray-300'}">${escHtml(e.message)}</span>
+        </div>
+      `).join('');
+    }
+
+    // -----------------------------------------------------------------------
+    // Positions
+    // -----------------------------------------------------------------------
+    async function loadPositions() {
+      const res = await fetch('/api/positions');
+      const data = await res.json();
+      if (data.error) {
+        document.getElementById('leader-positions').innerHTML =
+          `<p class="text-red-400 text-sm">${escHtml(data.error)}</p>`;
+        return;
+      }
+      document.getElementById('leader-positions').innerHTML = renderPositions(data.leader);
+      document.getElementById('follower-positions').innerHTML = renderPositions(data.follower);
+    }
+
+    function renderPositions(positions) {
+      if (!positions || positions.length === 0) {
+        return '<p class="text-gray-500 text-sm">No open option positions.</p>';
+      }
+      const rows = positions.map(p => {
+        const pnlClass = p.day_pnl >= 0 ? 'text-green-400' : 'text-red-400';
+        return `
+          <tr class="border-t border-gray-800">
+            <td class="py-2 pr-4 text-xs font-mono text-gray-200 max-w-xs truncate" title="${escHtml(p.description)}">${escHtml(p.symbol)}</td>
+            <td class="py-2 pr-4 text-xs text-right">${p.quantity}</td>
+            <td class="py-2 pr-4 text-xs text-right">$${p.average_price.toFixed(2)}</td>
+            <td class="py-2 pr-4 text-xs text-right">$${p.market_value.toFixed(2)}</td>
+            <td class="py-2 text-xs text-right ${pnlClass}">${p.day_pnl >= 0 ? '+' : ''}$${p.day_pnl.toFixed(2)}</td>
+          </tr>`;
+      }).join('');
+      return `
+        <table class="w-full text-sm">
+          <thead>
+            <tr class="text-gray-500 text-xs">
+              <th class="pb-2 text-left font-normal">Symbol</th>
+              <th class="pb-2 text-right font-normal">Qty</th>
+              <th class="pb-2 text-right font-normal">Avg Price</th>
+              <th class="pb-2 text-right font-normal">Mkt Value</th>
+              <th class="pb-2 text-right font-normal">Day P&L</th>
+            </tr>
+          </thead>
+          <tbody>${rows}</tbody>
+        </table>`;
+    }
+
+    function escHtml(str) {
+      return String(str)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;');
+    }
+
+    // -----------------------------------------------------------------------
+    // Init
+    // -----------------------------------------------------------------------
+    refreshStatus();
+    loadPositions();
+    setInterval(refreshStatus, 5000);
+    setInterval(loadPositions, 30000);
+  </script>
+</body>
+</html>
