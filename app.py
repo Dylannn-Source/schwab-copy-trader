@@ -2,6 +2,7 @@ import json
 import logging
 import os
 import threading
+import time
 from functools import wraps
 from pathlib import Path
 
@@ -154,11 +155,17 @@ def oauth_callback():
         auth=(config["app_key"], config["app_secret"]),
     )
     token_path = config.get("token_path", "schwab_token.json")
+    wrapped_token = {
+        "creation_timestamp": int(time.time()),
+        "token": dict(token),
+    }
     with open(token_path, "w") as f:
-        json.dump(dict(token), f)
+        json.dump(wrapped_token, f)
 
-    init_trader()
-    activity_log.append("INFO", "Schwab account connected successfully.")
+    if init_trader() is not None:
+        activity_log.append("INFO", "Schwab account connected successfully.")
+    else:
+        activity_log.append("ERROR", "Schwab token saved but client failed to initialise.")
     return redirect(url_for("dashboard"))
 
 
