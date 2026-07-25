@@ -230,6 +230,30 @@ def dashboard():
 # API
 # ---------------------------------------------------------------------------
 
+@app.route("/debug/token")
+@login_required
+def debug_token():
+    """Temporary diagnostic route — safe to remove once the token issue is resolved."""
+    token_path = Path(config.get("token_path", "schwab_token.json"))
+    info = {
+        "deployed_commit": os.environ.get("RAILWAY_GIT_COMMIT_SHA", "unknown"),
+        "resolved_token_path": str(token_path.resolve()),
+        "token_file_exists": token_path.exists(),
+        "token_top_level_keys": None,
+        "token_dir_listing": None,
+    }
+    if token_path.exists():
+        try:
+            with open(token_path) as f:
+                info["token_top_level_keys"] = list(json.load(f).keys())
+        except Exception as e:
+            info["token_top_level_keys"] = f"<error reading: {e}>"
+    parent = token_path.parent
+    if parent.exists():
+        info["token_dir_listing"] = [p.name for p in parent.iterdir()]
+    return jsonify(info)
+
+
 @app.route("/api/status")
 @login_required
 def api_status():
