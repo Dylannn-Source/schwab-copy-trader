@@ -1,4 +1,5 @@
 import collections
+import json
 import logging
 import threading
 from datetime import datetime, timedelta, timezone
@@ -197,7 +198,7 @@ class CopyTrader:
             return
 
         order_id = Utils(self.client, self.follower).extract_order_id(resp)
-        status = self._await_fill(order_id)
+        status, order_data = self._await_fill(order_id)
 
         if status == Client.Order.Status.FILLED:
             self.log.append(
@@ -209,8 +210,7 @@ class CopyTrader:
             self.log.append(
                 "ERROR",
                 f"ORDER {status.name}  {instruction} {symbol}  orderId={order_id}  "
-                "Order was accepted but did not fill — check the follower account "
-                "for the reason (buying power, options level, existing position, etc.).",
+                f"detail={self._order_detail(order_data)}",
             )
         else:
             self.log.append(
@@ -219,22 +219,37 @@ class CopyTrader:
                 f"orderId={order_id}  status={status}. Check the follower account manually.",
             )
 
+    @staticmethod
+    def _order_detail(order_data: dict | None) -> str:
+        if not order_data:
+            return "no order detail available"
+        fields = (
+            "statusDescription", "cancelTime", "orderType", "session",
+            "duration", "complexOrderStrategyType", "quantity",
+            "filledQuantity", "remainingQuantity",
+        )
+        present = {k: order_data[k] for k in fields if k in order_data}
+        return json.dumps(present) if present else "no order detail available"
+
     def _await_fill(self, order_id, attempts=6, delay=1.0):
         # place_order() returning 200/201 only means Schwab accepted the request,
-        # not that it filled — this confirms the actual terminal status.
+        # not that it filled — this confirms the actual terminal status and
+        # returns the raw order data so rejections can be diagnosed.
         if order_id is None:
             self.log.append("WARNING", "Order accepted but no orderId returned — cannot verify fill.")
-            return None
+            return None, None
         status = None
+        order_data = None
         for _ in range(attempts):
             try:
                 resp = self.client.get_order(order_id, self.follower)
                 resp.raise_for_status()
-                status = Client.Order.Status(resp.json().get("status"))
+                order_data = resp.json()
+                status = Client.Order.Status(order_data.get("status"))
                 if status in TERMINAL_ORDER_STATUSES:
-                    return status
+                    return status, order_data
             except Exception as e:
                 self.log.append("WARNING", f"Could not check order {order_id} status: {e}")
             if self._stop_event.wait(delay):
                 break
-        return status
+        return status, order_data
