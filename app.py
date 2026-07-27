@@ -257,6 +257,20 @@ def api_positions():
         return jsonify({"error": str(e)}), 500
 
 
+@app.route("/api/order/<order_id>")
+@login_required
+def api_order_detail(order_id):
+    client = get_client()
+    if not client:
+        return jsonify({"error": "Not connected to Schwab"}), 400
+    account_hash = request.args.get("account", config.get("follower_account_hash"))
+    try:
+        resp = client.get_order(order_id, account_hash)
+        return jsonify({"status_code": resp.status_code, "order": resp.json()})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
 @app.route("/api/start", methods=["POST"])
 @login_required
 def api_start():
