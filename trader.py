@@ -5,6 +5,7 @@ from datetime import datetime, timedelta, timezone
 
 from schwab.client import Client
 from schwab.orders import options as opt
+from schwab.utils import Utils
 
 log = logging.getLogger(__name__)
 
@@ -13,6 +14,13 @@ OPTION_INSTRUCTIONS = {
     "SELL_TO_CLOSE": opt.option_sell_to_close_market,
     "BUY_TO_CLOSE": opt.option_buy_to_close_market,
     "SELL_TO_OPEN": opt.option_sell_to_open_market,
+}
+
+TERMINAL_ORDER_STATUSES = {
+    Client.Order.Status.FILLED,
+    Client.Order.Status.REJECTED,
+    Client.Order.Status.CANCELED,
+    Client.Order.Status.EXPIRED,
 }
 
 
@@ -163,6 +171,11 @@ class CopyTrader:
     def _replicate_single(self, leg: dict):
         inst = leg.get("instrument", {})
         if inst.get("assetType") != "OPTION":
+            self.log.append(
+                "WARNING",
+                f"Non-option leg skipped — assetType={inst.get('assetType')} "
+                f"symbol={inst.get('symbol')}",
+            )
             return
         symbol = inst["symbol"]
         instruction = leg["instruction"]
@@ -175,15 +188,53 @@ class CopyTrader:
             return
 
         resp = self.client.place_order(self.follower, builder(symbol, follower_qty))
-        if resp.status_code in (200, 201):
-            self.log.append(
-                "INFO",
-                f"REPLICATED  {instruction} {symbol}  "
-                f"leader={int(leader_qty)}  follower={follower_qty}  ({self.multiplier}x)",
-            )
-        else:
+        if resp.status_code not in (200, 201):
             self.log.append(
                 "ERROR",
                 f"ORDER FAILED  {instruction} {symbol}  "
                 f"HTTP {resp.status_code}: {resp.text[:300]}",
             )
+            return
+
+        order_id = Utils(self.client, self.follower).extract_order_id(resp)
+        status = self._await_fill(order_id)
+
+        if status == Client.Order.Status.FILLED:
+            self.log.append(
+                "INFO",
+                f"REPLICATED  {instruction} {symbol}  "
+                f"leader={int(leader_qty)}  follower={follower_qty}  ({self.multiplier}x)",
+            )
+        elif status in TERMINAL_ORDER_STATUSES:
+            self.log.append(
+                "ERROR",
+                f"ORDER {status.name}  {instruction} {symbol}  orderId={order_id}  "
+                "Order was accepted but did not fill — check the follower account "
+                "for the reason (buying power, options level, existing position, etc.).",
+            )
+        else:
+            self.log.append(
+                "WARNING",
+                f"ORDER SUBMITTED but not confirmed filled  {instruction} {symbol}  "
+                f"orderId={order_id}  status={status}. Check the follower account manually.",
+            )
+
+    def _await_fill(self, order_id, attempts=6, delay=1.0):
+        # place_order() returning 200/201 only means Schwab accepted the request,
+        # not that it filled — this confirms the actual terminal status.
+        if order_id is None:
+            self.log.append("WARNING", "Order accepted but no orderId returned — cannot verify fill.")
+            return None
+        status = None
+        for _ in range(attempts):
+            try:
+                resp = self.client.get_order(order_id, self.follower)
+                resp.raise_for_status()
+                status = Client.Order.Status(resp.json().get("status"))
+                if status in TERMINAL_ORDER_STATUSES:
+                    return status
+            except Exception as e:
+                self.log.append("WARNING", f"Could not check order {order_id} status: {e}")
+            if self._stop_event.wait(delay):
+                break
+        return status
