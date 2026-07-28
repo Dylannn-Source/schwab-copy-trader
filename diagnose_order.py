@@ -7,7 +7,8 @@ including fields the dashboard's activity log doesn't surface.
 Usage:
     python diagnose_order.py <order_id> [account_hash]
 
-If account_hash is omitted, follower_account_hash from config.json is used.
+If account_hash is omitted, the first entry in follower_account_hashes from
+config.json is used.
 """
 import json
 import os
@@ -28,7 +29,7 @@ def main():
     with open(CONFIG_PATH) as f:
         config = json.load(f)
 
-    account_hash = sys.argv[2] if len(sys.argv) > 2 else config["follower_account_hash"]
+    account_hash = sys.argv[2] if len(sys.argv) > 2 else config["follower_account_hashes"][0]
     token_path = config.get("token_path", "schwab_token.json")
 
     client = schwab.auth.client_from_token_file(

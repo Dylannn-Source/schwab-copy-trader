@@ -90,10 +90,10 @@
         </div>
       </section>
 
-      <!-- Follower -->
+      <!-- Followers -->
       <section class="bg-gray-900 rounded-xl border border-gray-800 p-5">
         <h2 class="text-sm font-semibold text-gray-300 mb-3 uppercase tracking-wide">Follower Positions</h2>
-        <div id="follower-positions">
+        <div id="follower-positions" class="space-y-4">
           <p class="text-gray-500 text-sm">Loading…</p>
         </div>
       </section>
@@ -188,7 +188,16 @@
         return;
       }
       document.getElementById('leader-positions').innerHTML = renderPositions(data.leader);
-      document.getElementById('follower-positions').innerHTML = renderPositions(data.follower);
+
+      const followerEntries = Object.entries(data.followers || {});
+      document.getElementById('follower-positions').innerHTML = followerEntries.length
+        ? followerEntries.map(([hash, positions]) => `
+            <div>
+              <p class="text-xs text-gray-500 font-mono mb-1">${escHtml(hash.slice(0, 12))}…</p>
+              ${renderPositions(positions)}
+            </div>
+          `).join('')
+        : '<p class="text-gray-500 text-sm">No follower accounts configured.</p>';
     }
 
     function renderPositions(positions) {

@@ -51,7 +51,7 @@ class CopyTrader:
         self.client = client
         self.log = activity_log
         self.leader = config["leader_account_hash"]
-        self.follower = config["follower_account_hash"]
+        self.followers = config["follower_account_hashes"]
         self.multiplier = float(config.get("size_multiplier", 1.0))
         self.poll_interval = int(config.get("poll_interval_seconds", 5))
         self.lookback_hours = int(config.get("lookback_hours", 2))
@@ -188,34 +188,45 @@ class CopyTrader:
             self.log.append("WARNING", f"Unknown instruction {instruction} — skipped")
             return
 
-        resp = self.client.place_order(self.follower, builder(symbol, follower_qty))
+        # Place on every follower account back-to-back first, then verify fills —
+        # verifying one account's fill before placing the next would delay
+        # execution on the remaining followers.
+        placements = [
+            (account_hash, self.client.place_order(account_hash, builder(symbol, follower_qty)))
+            for account_hash in self.followers
+        ]
+        for account_hash, resp in placements:
+            self._confirm_placement(account_hash, resp, instruction, symbol, leader_qty, follower_qty)
+
+    def _confirm_placement(self, account_hash, resp, instruction, symbol, leader_qty, follower_qty):
+        tag = account_hash[:8]
         if resp.status_code not in (200, 201):
             self.log.append(
                 "ERROR",
-                f"ORDER FAILED  {instruction} {symbol}  "
+                f"ORDER FAILED [{tag}]  {instruction} {symbol}  "
                 f"HTTP {resp.status_code}: {resp.text[:300]}",
             )
             return
 
-        order_id = Utils(self.client, self.follower).extract_order_id(resp)
-        status, order_data = self._await_fill(order_id)
+        order_id = Utils(self.client, account_hash).extract_order_id(resp)
+        status, order_data = self._await_fill(account_hash, order_id)
 
         if status == Client.Order.Status.FILLED:
             self.log.append(
                 "INFO",
-                f"REPLICATED  {instruction} {symbol}  "
+                f"REPLICATED [{tag}]  {instruction} {symbol}  "
                 f"leader={int(leader_qty)}  follower={follower_qty}  ({self.multiplier}x)",
             )
         elif status in TERMINAL_ORDER_STATUSES:
             self.log.append(
                 "ERROR",
-                f"ORDER {status.name}  {instruction} {symbol}  orderId={order_id}  "
+                f"ORDER {status.name} [{tag}]  {instruction} {symbol}  orderId={order_id}  "
                 f"detail={self._order_detail(order_data)}",
             )
         else:
             self.log.append(
                 "WARNING",
-                f"ORDER SUBMITTED but not confirmed filled  {instruction} {symbol}  "
+                f"ORDER SUBMITTED but not confirmed filled [{tag}]  {instruction} {symbol}  "
                 f"orderId={order_id}  status={status}. Check the follower account manually.",
             )
 
@@ -231,25 +242,25 @@ class CopyTrader:
         present = {k: order_data[k] for k in fields if k in order_data}
         return json.dumps(present) if present else "no order detail available"
 
-    def _await_fill(self, order_id, attempts=6, delay=1.0):
+    def _await_fill(self, account_hash, order_id, attempts=6, delay=1.0):
         # place_order() returning 200/201 only means Schwab accepted the request,
         # not that it filled — this confirms the actual terminal status and
         # returns the raw order data so rejections can be diagnosed.
         if order_id is None:
-            self.log.append("WARNING", "Order accepted but no orderId returned — cannot verify fill.")
+            self.log.append("WARNING", f"Order accepted but no orderId returned for [{account_hash[:8]}] — cannot verify fill.")
             return None, None
         status = None
         order_data = None
         for _ in range(attempts):
             try:
-                resp = self.client.get_order(order_id, self.follower)
+                resp = self.client.get_order(order_id, account_hash)
                 resp.raise_for_status()
                 order_data = resp.json()
                 status = Client.Order.Status(order_data.get("status"))
                 if status in TERMINAL_ORDER_STATUSES:
                     return status, order_data
             except Exception as e:
-                self.log.append("WARNING", f"Could not check order {order_id} status: {e}")
+                self.log.append("WARNING", f"Could not check order {order_id} status for [{account_hash[:8]}]: {e}")
             if self._stop_event.wait(delay):
                 break
         return status, order_data

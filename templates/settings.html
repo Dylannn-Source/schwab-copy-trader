@@ -55,10 +55,12 @@
                    focus:outline-none focus:border-blue-500 font-mono text-sm">
         </div>
         <div>
-          <label class="block text-sm text-gray-400 mb-1">Follower Account Hash</label>
-          <input type="text" name="follower_account_hash" value="{{ config.get('follower_account_hash', '') }}"
+          <label class="block text-sm text-gray-400 mb-1">Follower Account Hashes</label>
+          <textarea name="follower_account_hashes" rows="4" placeholder="One account hash per line"
             class="w-full bg-gray-800 text-white rounded-lg px-4 py-2.5 border border-gray-700
-                   focus:outline-none focus:border-blue-500 font-mono text-sm">
+                   focus:outline-none focus:border-blue-500 font-mono text-sm"
+          >{{ config.get('follower_account_hashes', []) | join('\n') }}</textarea>
+          <p class="text-xs text-gray-500 mt-1">One account hash per line — every trade is copied to each account listed here.</p>
         </div>
 
         <button type="submit"
@@ -97,16 +99,16 @@
                     class="px-3 py-1 text-xs rounded-lg border border-gray-700 hover:border-blue-500 text-gray-300 transition-colors">
                     Set as Leader
                   </button>
-                  <button type="button" onclick="assign('follower_account_hash', '{{ acct.hashValue }}')"
+                  <button type="button" onclick="addFollower('{{ acct.hashValue }}')"
                     class="px-3 py-1 text-xs rounded-lg border border-gray-700 hover:border-blue-500 text-gray-300 transition-colors">
-                    Set as Follower
+                    Add as Follower
                   </button>
                 </td>
               </tr>
             {% endfor %}
           </tbody>
         </table>
-        <p class="text-xs text-gray-500 mt-3">Click a button to fill in the hash above, then hit Save.</p>
+        <p class="text-xs text-gray-500 mt-3">"Set as Leader" replaces the leader hash; "Add as Follower" appends to the follower list. Hit Save when done.</p>
       </section>
     {% elif trader_ready %}
       <section class="bg-gray-900 rounded-xl border border-gray-800 p-5">
@@ -119,6 +121,14 @@
   <script>
     function assign(field, value) {
       document.querySelector(`[name="${field}"]`).value = value;
+    }
+    function addFollower(hash) {
+      const textarea = document.querySelector('[name="follower_account_hashes"]');
+      const lines = textarea.value.split('\n').map(l => l.trim()).filter(Boolean);
+      if (!lines.includes(hash)) {
+        lines.push(hash);
+        textarea.value = lines.join('\n');
+      }
     }
   </script>
 </body>

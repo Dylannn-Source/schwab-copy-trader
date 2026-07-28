@@ -35,15 +35,23 @@ if CONFIG_PATH.exists():
 
 # Environment variables override config.json — used on Railway/cloud hosts.
 for _key, _env in [
-    ("app_key",               "APP_KEY"),
-    ("app_secret",            "APP_SECRET"),
-    ("redirect_uri",          "REDIRECT_URI"),
-    ("leader_account_hash",   "LEADER_ACCOUNT_HASH"),
-    ("follower_account_hash", "FOLLOWER_ACCOUNT_HASH"),
-    ("token_path",            "TOKEN_PATH"),
+    ("app_key",                 "APP_KEY"),
+    ("app_secret",              "APP_SECRET"),
+    ("redirect_uri",            "REDIRECT_URI"),
+    ("leader_account_hash",     "LEADER_ACCOUNT_HASH"),
+    ("follower_account_hashes", "FOLLOWER_ACCOUNT_HASHES"),
+    ("token_path",              "TOKEN_PATH"),
 ]:
     if os.environ.get(_env):
         config[_key] = os.environ[_env]
+
+# Followers used to be a single hash; accept the old key and comma-separated
+# env values, and normalize to a list going forward.
+_raw_followers = config.get("follower_account_hashes", config.get("follower_account_hash", []))
+if isinstance(_raw_followers, str):
+    _raw_followers = [h.strip() for h in _raw_followers.split(",") if h.strip()]
+config["follower_account_hashes"] = _raw_followers
+config.pop("follower_account_hash", None)
 
 DASHBOARD_PASSWORD = os.environ.get(
     "DASHBOARD_PASSWORD", config.get("dashboard_password", "changeme")
@@ -82,7 +90,7 @@ def save_config():
 def init_trader() -> CopyTrader | None:
     global _trader
     client = get_client()
-    if not client or not config.get("leader_account_hash") or not config.get("follower_account_hash"):
+    if not client or not config.get("leader_account_hash") or not config.get("follower_account_hashes"):
         return None
     with _trader_lock:
         _trader = CopyTrader(config, client, activity_log)
@@ -177,10 +185,15 @@ def oauth_callback():
 @login_required
 def settings():
     if request.method == "POST":
-        for key in ("app_key", "redirect_uri", "leader_account_hash", "follower_account_hash"):
+        for key in ("app_key", "redirect_uri", "leader_account_hash"):
             value = request.form.get(key, "").strip()
             if value:
                 config[key] = value
+        followers = [
+            h.strip() for h in request.form.get("follower_account_hashes", "").splitlines() if h.strip()
+        ]
+        if followers:
+            config["follower_account_hashes"] = followers
         app_secret = request.form.get("app_secret", "").strip()
         if app_secret:
             config["app_secret"] = app_secret
@@ -247,11 +260,13 @@ def api_status():
 def api_positions():
     t = get_trader()
     if not t:
-        return jsonify({"leader": [], "follower": []})
+        return jsonify({"leader": [], "followers": {}})
     try:
         return jsonify({
             "leader": t.get_positions(config["leader_account_hash"]),
-            "follower": t.get_positions(config["follower_account_hash"]),
+            "followers": {
+                h: t.get_positions(h) for h in config["follower_account_hashes"]
+            },
         })
     except Exception as e:
         return jsonify({"error": str(e)}), 500
@@ -263,7 +278,8 @@ def api_order_detail(order_id):
     client = get_client()
     if not client:
         return jsonify({"error": "Not connected to Schwab"}), 400
-    account_hash = request.args.get("account", config.get("follower_account_hash"))
+    default_account = next(iter(config.get("follower_account_hashes", [])), None)
+    account_hash = request.args.get("account", default_account)
     try:
         resp = client.get_order(order_id, account_hash)
         return jsonify({"status_code": resp.status_code, "order": resp.json()})

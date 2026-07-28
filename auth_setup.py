@@ -28,7 +28,7 @@ def main():
 
     print("\nCopy the hash values into config.json:")
     print('  "leader_account_hash": "<hash of leader account>"')
-    print('  "follower_account_hash": "<hash of follower account>"')
+    print('  "follower_account_hashes": ["<hash of follower account>", ...]')
 
 
 if __name__ == "__main__":
