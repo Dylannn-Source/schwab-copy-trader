@@ -3,6 +3,7 @@
   "app_secret": "YOUR_APP_SECRET",
   "redirect_uri": "https://127.0.0.1",
   "token_path": "schwab_token.json",
+  "state_path": "trader_state.json",
   "leader_account_hash": "",
   "follower_account_hashes": [],
   "size_multiplier": 1.0,

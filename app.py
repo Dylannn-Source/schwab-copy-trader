@@ -41,6 +41,7 @@ for _key, _env in [
     ("leader_account_hash",     "LEADER_ACCOUNT_HASH"),
     ("follower_account_hashes", "FOLLOWER_ACCOUNT_HASHES"),
     ("token_path",              "TOKEN_PATH"),
+    ("state_path",              "STATE_PATH"),
 ]:
     if os.environ.get(_env):
         config[_key] = os.environ[_env]

@@ -3,6 +3,7 @@ import json
 import logging
 import threading
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 from schwab.client import Client
 from schwab.orders import options as opt
@@ -55,9 +56,17 @@ class CopyTrader:
         self.multiplier = float(config.get("size_multiplier", 1.0))
         self.poll_interval = int(config.get("poll_interval_seconds", 5))
         self.lookback_hours = int(config.get("lookback_hours", 2))
-        self.seen_order_ids: set[str] = set()
         self._stop_event = threading.Event()
         self._thread: threading.Thread | None = None
+
+        # Persisted so a restart can tell "already replicated in a previous
+        # session" apart from "genuinely new, happened while we were down" —
+        # without this, every restart blindly re-seeds recent fills as
+        # already-handled and silently drops trades that occurred just
+        # before startup.
+        self.state_path = Path(config.get("state_path", "trader_state.json"))
+        self._is_first_run = not self.state_path.exists()
+        self.seen_order_ids: set[str] = self._load_state()
 
     # ------------------------------------------------------------------
     # Control
@@ -85,6 +94,30 @@ class CopyTrader:
     def set_multiplier(self, value: float):
         self.multiplier = max(0.1, round(float(value), 2))
         self.log.append("INFO", f"Multiplier updated to {self.multiplier}x")
+
+    # ------------------------------------------------------------------
+    # Persisted state
+    # ------------------------------------------------------------------
+
+    def _load_state(self) -> set[str]:
+        if self._is_first_run:
+            return set()
+        try:
+            data = json.loads(self.state_path.read_text())
+            return set(data.get("processed_order_ids", []))
+        except Exception as e:
+            self.log.append("WARNING", f"Could not load trader state, starting empty: {e}")
+            return set()
+
+    def _save_state(self):
+        try:
+            self.state_path.write_text(json.dumps({"processed_order_ids": sorted(self.seen_order_ids)}))
+        except Exception as e:
+            self.log.append("WARNING", f"Could not persist trader state: {e}")
+
+    def _mark_seen(self, order_id: str):
+        self.seen_order_ids.add(order_id)
+        self._save_state()
 
     # ------------------------------------------------------------------
     # Positions
@@ -117,9 +150,7 @@ class CopyTrader:
 
     def _run(self):
         try:
-            for order in self._filled_orders():
-                self.seen_order_ids.add(str(order["orderId"]))
-            self.log.append("INFO", f"Seeded {len(self.seen_order_ids)} existing fills.")
+            self._catch_up()
         except Exception as e:
             self.log.append("ERROR", f"Failed to seed orders: {e}")
 
@@ -130,11 +161,32 @@ class CopyTrader:
                 self.log.append("ERROR", f"Poll error: {e}")
             self._stop_event.wait(self.poll_interval)
 
+    def _catch_up(self):
+        fills = self._filled_orders()
+        if self._is_first_run:
+            # No persisted state — this is the very first time this leader
+            # account has been tracked, so treat existing fills as pre-existing
+            # history rather than trades to replicate.
+            for order in fills:
+                self._mark_seen(str(order["orderId"]))
+            self.log.append("INFO", f"First run — seeded {len(self.seen_order_ids)} existing fills without replicating.")
+            return
+
+        replicated = 0
+        for order in fills:
+            oid = str(order["orderId"])
+            if oid not in self.seen_order_ids:
+                self._mark_seen(oid)
+                replicated += 1
+                self.log.append("INFO", f"Unreplicated fill from before restart — orderId={oid}")
+                self._replicate(order)
+        self.log.append("INFO", f"Resumed with {len(self.seen_order_ids)} known fills ({replicated} replicated on startup).")
+
     def _poll(self):
         for order in self._filled_orders():
             oid = str(order["orderId"])
             if oid not in self.seen_order_ids:
-                self.seen_order_ids.add(oid)
+                self._mark_seen(oid)
                 self.log.append("INFO", f"New fill detected — orderId={oid}")
                 self._replicate(order)
 

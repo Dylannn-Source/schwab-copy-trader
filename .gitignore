@@ -1,6 +1,7 @@
 .venv/
 config.json
 schwab_token.json
+trader_state.json
 __pycache__/
 *.pyc
 .DS_Store
