@@ -73,12 +73,26 @@
     {% if not config.get('app_key') or not config.get('app_secret') or not config.get('redirect_uri') %}
       <section class="bg-gray-900 rounded-xl border border-gray-800 p-5">
         <p class="text-sm text-gray-400">
-          Save your App Key, App Secret, and Redirect URI above, then go back to the
-          <a href="/" class="text-blue-400 hover:text-blue-300">dashboard</a> and click
-          <span class="text-gray-200">Connect Schwab</span> to log in and discover your account hashes.
+          Save your App Key, App Secret, and Redirect URI above, then click
+          <span class="text-gray-200">Connect Schwab</span> below to log in and discover your account hashes.
         </p>
       </section>
-    {% elif accounts %}
+    {% endif %}
+
+    {% if config.get('app_key') and config.get('app_secret') and config.get('redirect_uri') %}
+      <section class="bg-gray-900 rounded-xl border border-gray-800 p-5">
+        <a href="/auth/connect"
+           class="inline-block text-sm bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-lg transition-colors">
+          Connect / Reconnect Schwab
+        </a>
+        <p class="text-xs text-gray-500 mt-2">
+          Use this any time — including if Schwab's account-selection screen only let you share some accounts
+          before and you want to add more. Re-authorizing lets you pick again.
+        </p>
+      </section>
+    {% endif %}
+
+    {% if accounts %}
       <section class="bg-gray-900 rounded-xl border border-gray-800 p-5">
         <h2 class="text-sm font-semibold text-gray-300 mb-4 uppercase tracking-wide">Linked Accounts</h2>
         <table class="w-full text-sm">
