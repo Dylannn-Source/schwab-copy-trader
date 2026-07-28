@@ -4,6 +4,7 @@ import logging
 import threading
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 from schwab.client import Client
 from schwab.orders import options as opt
@@ -25,6 +26,8 @@ TERMINAL_ORDER_STATUSES = {
     Client.Order.Status.EXPIRED,
 }
 
+PACIFIC = ZoneInfo("America/Los_Angeles")
+
 
 class ActivityLog:
     def __init__(self, maxlen=500):
@@ -33,7 +36,7 @@ class ActivityLog:
 
     def append(self, level: str, message: str):
         entry = {
-            "time": datetime.now().strftime("%H:%M:%S"),
+            "time": datetime.now(timezone.utc).astimezone(PACIFIC).strftime("%H:%M:%S"),
             "level": level,
             "message": message,
         }
