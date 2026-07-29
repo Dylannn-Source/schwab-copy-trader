@@ -105,12 +105,13 @@
     <section class="bg-gray-900 rounded-xl border border-gray-800 p-5">
       <h2 class="text-sm font-semibold text-gray-300 mb-3 uppercase tracking-wide">Email Alerts</h2>
       {% if email_alerts_configured %}
-        <p class="text-sm text-green-400 mb-3">Configured — session-expiry alerts will be sent to {{ alert_email_to }}.</p>
+        <p class="text-sm text-green-400 mb-3">Configured — session-expiry alerts will be sent to {{ alert_email_to | join(', ') }}.</p>
       {% else %}
         <p class="text-sm text-gray-400 mb-3">
           Not configured. Set <code class="text-gray-300">SMTP_USERNAME</code>, <code class="text-gray-300">SMTP_PASSWORD</code>
           (a Gmail App Password works), and <code class="text-gray-300">ALERT_EMAIL_TO</code> as environment variables
-          on Railway, then redeploy.
+          on Railway, then redeploy. For multiple recipients, separate addresses with commas
+          (e.g. <code class="text-gray-300">a@example.com, b@example.com</code>).
         </p>
       {% endif %}
       <button type="button" onclick="sendTestEmail()"

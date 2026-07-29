@@ -41,7 +41,10 @@ SMTP_HOST = os.environ.get("SMTP_HOST", "smtp.gmail.com")
 SMTP_PORT = int(os.environ.get("SMTP_PORT", "587"))
 SMTP_USERNAME = os.environ.get("SMTP_USERNAME")
 SMTP_PASSWORD = os.environ.get("SMTP_PASSWORD")
-ALERT_EMAIL_TO = os.environ.get("ALERT_EMAIL_TO", SMTP_USERNAME)
+# Comma-separated for multiple recipients, e.g. "a@example.com, b@example.com"
+ALERT_EMAIL_TO = [
+    addr.strip() for addr in os.environ.get("ALERT_EMAIL_TO", SMTP_USERNAME or "").split(",") if addr.strip()
+]
 TOKEN_WATCHER_INTERVAL_SECONDS = 6 * 3600
 
 app = Flask(__name__)
@@ -139,13 +142,13 @@ def send_alert_email(subject: str, body: str) -> None:
     msg = MIMEText(body)
     msg["Subject"] = subject
     msg["From"] = SMTP_USERNAME
-    msg["To"] = ALERT_EMAIL_TO
+    msg["To"] = ", ".join(ALERT_EMAIL_TO)
     try:
         with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=10) as server:
             server.starttls()
             server.login(SMTP_USERNAME, SMTP_PASSWORD)
-            server.send_message(msg)
-        activity_log.append("INFO", f"Sent alert email: {subject}")
+            server.send_message(msg, to_addrs=ALERT_EMAIL_TO)
+        activity_log.append("INFO", f"Sent alert email to {len(ALERT_EMAIL_TO)} recipient(s): {subject}")
     except Exception as e:
         activity_log.append("ERROR", f"Failed to send alert email ({subject!r}): {e}")
 
