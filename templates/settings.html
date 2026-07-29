@@ -102,6 +102,24 @@
       </section>
     {% endif %}
 
+    <section class="bg-gray-900 rounded-xl border border-gray-800 p-5">
+      <h2 class="text-sm font-semibold text-gray-300 mb-3 uppercase tracking-wide">Email Alerts</h2>
+      {% if email_alerts_configured %}
+        <p class="text-sm text-green-400 mb-3">Configured — session-expiry alerts will be sent to {{ alert_email_to }}.</p>
+      {% else %}
+        <p class="text-sm text-gray-400 mb-3">
+          Not configured. Set <code class="text-gray-300">SMTP_USERNAME</code>, <code class="text-gray-300">SMTP_PASSWORD</code>
+          (a Gmail App Password works), and <code class="text-gray-300">ALERT_EMAIL_TO</code> as environment variables
+          on Railway, then redeploy.
+        </p>
+      {% endif %}
+      <button type="button" onclick="sendTestEmail()"
+        class="text-sm bg-gray-800 hover:bg-gray-700 border border-gray-700 text-gray-200 px-4 py-2 rounded-lg transition-colors">
+        Send Test Email
+      </button>
+      <span id="test-email-result" class="text-xs ml-2"></span>
+    </section>
+
     {% if accounts %}
       <section class="bg-gray-900 rounded-xl border border-gray-800 p-5">
         <h2 class="text-sm font-semibold text-gray-300 mb-4 uppercase tracking-wide">Linked Accounts</h2>
@@ -152,6 +170,25 @@
       if (!lines.includes(hash)) {
         lines.push(hash);
         textarea.value = lines.join('\n');
+      }
+    }
+    async function sendTestEmail() {
+      const result = document.getElementById('test-email-result');
+      result.textContent = 'Sending…';
+      result.className = 'text-xs ml-2 text-gray-400';
+      try {
+        const res = await fetch('/api/test-alert-email', { method: 'POST' });
+        const data = await res.json();
+        if (data.error) {
+          result.textContent = data.error;
+          result.className = 'text-xs ml-2 text-red-400';
+        } else {
+          result.textContent = 'Sent — check your inbox.';
+          result.className = 'text-xs ml-2 text-green-400';
+        }
+      } catch (e) {
+        result.textContent = 'Request failed.';
+        result.className = 'text-xs ml-2 text-red-400';
       }
     }
   </script>

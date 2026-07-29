@@ -1,9 +1,11 @@
 import json
 import logging
 import os
+import smtplib
 import threading
 import time
 from datetime import datetime, timedelta, timezone
+from email.mime.text import MIMEText
 from functools import wraps
 from pathlib import Path
 
@@ -32,6 +34,15 @@ REFRESH_TOKEN_LIFETIME_DAYS = 7
 REAUTH_WARNING_DAYS = 2
 
 COMBINED_FOLLOWERS = "combined_followers"
+
+# Email alerting (e.g. Gmail SMTP with an app password) — all optional; if
+# unset, alerts are simply skipped rather than erroring the whole app.
+SMTP_HOST = os.environ.get("SMTP_HOST", "smtp.gmail.com")
+SMTP_PORT = int(os.environ.get("SMTP_PORT", "587"))
+SMTP_USERNAME = os.environ.get("SMTP_USERNAME")
+SMTP_PASSWORD = os.environ.get("SMTP_PASSWORD")
+ALERT_EMAIL_TO = os.environ.get("ALERT_EMAIL_TO", SMTP_USERNAME)
+TOKEN_WATCHER_INTERVAL_SECONDS = 6 * 3600
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("SECRET_KEY", os.urandom(24))
@@ -119,6 +130,63 @@ def get_token_status() -> dict | None:
         }
     except Exception:
         return None
+
+
+def send_alert_email(subject: str, body: str) -> None:
+    if not SMTP_USERNAME or not SMTP_PASSWORD or not ALERT_EMAIL_TO:
+        activity_log.append("WARNING", f"Skipped alert email ({subject!r}) — SMTP not configured.")
+        return
+    msg = MIMEText(body)
+    msg["Subject"] = subject
+    msg["From"] = SMTP_USERNAME
+    msg["To"] = ALERT_EMAIL_TO
+    try:
+        with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=10) as server:
+            server.starttls()
+            server.login(SMTP_USERNAME, SMTP_PASSWORD)
+            server.send_message(msg)
+        activity_log.append("INFO", f"Sent alert email: {subject}")
+    except Exception as e:
+        activity_log.append("ERROR", f"Failed to send alert email ({subject!r}): {e}")
+
+
+# Tracks which expiry cycle we've already emailed about, keyed by the token's
+# expires_at timestamp — that value only changes when you reconnect, so this
+# naturally resets after each reauthentication without needing to persist
+# anything, and avoids re-sending the same alert on every periodic check.
+_token_alert_sent = {"warning": None, "expired": None}
+
+
+def _token_watcher_loop(stop_event: threading.Event):
+    while not stop_event.is_set():
+        try:
+            status = get_token_status()
+            if status:
+                expires_at = status["expires_at"]
+                if status["expired"] and _token_alert_sent["expired"] != expires_at:
+                    send_alert_email(
+                        "Schwab Copy Trader — session expired",
+                        "Your Schwab session has expired. Trades will fail until you reconnect.\n\n"
+                        "Go to your dashboard's Settings page and click 'Connect / Reconnect Schwab'.",
+                    )
+                    _token_alert_sent["expired"] = expires_at
+                elif status["warning"] and _token_alert_sent["warning"] != expires_at:
+                    send_alert_email(
+                        "Schwab Copy Trader — session expiring soon",
+                        f"Your Schwab session expires in ~{status['days_remaining']:.1f} day(s) "
+                        f"(around {expires_at}).\n\n"
+                        "Reconnect soon via your dashboard's Settings page to avoid interruption.",
+                    )
+                    _token_alert_sent["warning"] = expires_at
+        except Exception as e:
+            activity_log.append("ERROR", f"Token watcher error: {e}")
+        stop_event.wait(TOKEN_WATCHER_INTERVAL_SECONDS)
+
+
+_token_watcher_stop = threading.Event()
+threading.Thread(
+    target=_token_watcher_loop, args=(_token_watcher_stop,), daemon=True, name="token-watcher",
+).start()
 
 
 def save_config():
@@ -261,6 +329,8 @@ def settings():
         trader_ready=get_trader() is not None,
         token_status=get_token_status(),
         refresh_token_lifetime_days=REFRESH_TOKEN_LIFETIME_DAYS,
+        email_alerts_configured=bool(SMTP_USERNAME and SMTP_PASSWORD and ALERT_EMAIL_TO),
+        alert_email_to=ALERT_EMAIL_TO,
     )
 
 
@@ -297,7 +367,20 @@ def api_status():
         "multiplier": t.multiplier if t else config.get("size_multiplier", 1.0),
         "log": activity_log.entries()[-100:],
         "token_status": get_token_status(),
+        "email_alerts_configured": bool(SMTP_USERNAME and SMTP_PASSWORD and ALERT_EMAIL_TO),
     })
+
+
+@app.route("/api/test-alert-email", methods=["POST"])
+@login_required
+def api_test_alert_email():
+    if not (SMTP_USERNAME and SMTP_PASSWORD and ALERT_EMAIL_TO):
+        return jsonify({"error": "SMTP_USERNAME, SMTP_PASSWORD, and ALERT_EMAIL_TO must be set first."}), 400
+    send_alert_email(
+        "Schwab Copy Trader — test alert",
+        "This is a test email from your Schwab Copy Trader — if you're reading this, email alerts are working.",
+    )
+    return jsonify({"sent": True})
 
 
 @app.route("/api/positions")
