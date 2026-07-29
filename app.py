@@ -31,6 +31,8 @@ SCHWAB_TOKEN_URL = "https://api.schwabapi.com/v1/oauth/token"
 REFRESH_TOKEN_LIFETIME_DAYS = 7
 REAUTH_WARNING_DAYS = 2
 
+COMBINED_FOLLOWERS = "combined_followers"
+
 app = Flask(__name__)
 app.secret_key = os.environ.get("SECRET_KEY", os.urandom(24))
 
@@ -275,6 +277,9 @@ def dashboard():
         connected=t is not None,
         running=t.is_running() if t else False,
         multiplier=t.multiplier if t else config.get("size_multiplier", 1.0),
+        leader_hash=config.get("leader_account_hash", ""),
+        follower_hashes=config.get("follower_account_hashes", []),
+        combined_followers_value=COMBINED_FOLLOWERS,
     )
 
 
@@ -308,6 +313,37 @@ def api_positions():
                 h: t.get_positions(h) for h in config["follower_account_hashes"]
             },
         })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/pnl")
+@login_required
+def api_pnl():
+    t = get_trader()
+    if not t:
+        return jsonify({"error": "Not connected to Schwab"}), 400
+
+    account = request.args.get("account", "")
+    try:
+        year = int(request.args.get("year"))
+        month = int(request.args.get("month"))
+    except (TypeError, ValueError):
+        return jsonify({"error": "year and month query params are required"}), 400
+
+    start = datetime(year, month, 1, tzinfo=timezone.utc)
+    next_month = datetime(year + 1, 1, 1, tzinfo=timezone.utc) if month == 12 \
+        else datetime(year, month + 1, 1, tzinfo=timezone.utc)
+    end = next_month - timedelta(seconds=1)
+
+    try:
+        if account == COMBINED_FOLLOWERS:
+            combined: dict[str, float] = {}
+            for h in config["follower_account_hashes"]:
+                for date, pnl in t.get_daily_pnl(h, start, end).items():
+                    combined[date] = combined.get(date, 0) + pnl
+            return jsonify({"pnl": combined})
+        return jsonify({"pnl": t.get_daily_pnl(account, start, end)})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 

@@ -101,6 +101,35 @@
       </section>
     </div>
 
+    <!-- P&L Calendar -->
+    <section class="bg-gray-900 rounded-xl border border-gray-800 p-5">
+      <div class="flex flex-wrap items-center justify-between gap-3 mb-4">
+        <h2 class="text-sm font-semibold text-gray-300 uppercase tracking-wide">P&amp;L Calendar</h2>
+        <div class="flex items-center gap-2 flex-wrap">
+          <select id="pnl-account-select"
+            class="bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-sm text-white
+                   focus:outline-none focus:border-blue-500">
+            {% if leader_hash %}
+              <option value="{{ leader_hash }}">Leader</option>
+            {% endif %}
+            {% if follower_hashes %}
+              <option value="{{ combined_followers_value }}">All Followers (Combined)</option>
+            {% endif %}
+            {% for h in follower_hashes %}
+              <option value="{{ h }}">Follower {{ h[:8] }}…</option>
+            {% endfor %}
+          </select>
+          <button id="pnl-prev" class="px-2 py-1 text-sm rounded-lg border border-gray-700 hover:border-gray-500 text-gray-300 transition-colors">←</button>
+          <span id="pnl-month-label" class="text-sm text-gray-300 w-32 text-center inline-block"></span>
+          <button id="pnl-next" class="px-2 py-1 text-sm rounded-lg border border-gray-700 hover:border-gray-500 text-gray-300 transition-colors">→</button>
+          <span id="pnl-month-total" class="text-sm font-semibold ml-2"></span>
+        </div>
+      </div>
+      <div id="pnl-grid" class="grid grid-cols-7 gap-1.5">
+        <p class="text-gray-500 text-sm col-span-7">Loading…</p>
+      </div>
+    </section>
+
     <!-- Activity Log -->
     <section class="bg-gray-900 rounded-xl border border-gray-800 p-5">
       <h2 class="text-sm font-semibold text-gray-300 mb-3 uppercase tracking-wide">Activity Log</h2>
@@ -259,10 +288,95 @@
     }
 
     // -----------------------------------------------------------------------
+    // P&L Calendar
+    // -----------------------------------------------------------------------
+    const MONTH_NAMES = ['January','February','March','April','May','June',
+                         'July','August','September','October','November','December'];
+    let pnlYear, pnlMonth;
+
+    function initPnlCalendar() {
+      const select = document.getElementById('pnl-account-select');
+      if (!select.options.length) {
+        document.getElementById('pnl-grid').innerHTML =
+          '<p class="text-gray-500 text-sm col-span-7">No accounts configured yet — set them up in Settings.</p>';
+        return;
+      }
+      const now = new Date();
+      pnlYear = now.getFullYear();
+      pnlMonth = now.getMonth() + 1;
+      select.addEventListener('change', loadPnlCalendar);
+      document.getElementById('pnl-prev').addEventListener('click', () => shiftPnlMonth(-1));
+      document.getElementById('pnl-next').addEventListener('click', () => shiftPnlMonth(1));
+      loadPnlCalendar();
+    }
+
+    function shiftPnlMonth(delta) {
+      pnlMonth += delta;
+      if (pnlMonth < 1) { pnlMonth = 12; pnlYear -= 1; }
+      if (pnlMonth > 12) { pnlMonth = 1; pnlYear += 1; }
+      loadPnlCalendar();
+    }
+
+    async function loadPnlCalendar() {
+      document.getElementById('pnl-month-label').textContent = `${MONTH_NAMES[pnlMonth - 1]} ${pnlYear}`;
+      const grid = document.getElementById('pnl-grid');
+      grid.innerHTML = '<p class="text-gray-500 text-sm col-span-7">Loading…</p>';
+
+      const account = document.getElementById('pnl-account-select').value;
+      try {
+        const res = await fetch(`/api/pnl?account=${encodeURIComponent(account)}&year=${pnlYear}&month=${pnlMonth}`);
+        const data = await res.json();
+        if (data.error) {
+          grid.innerHTML = `<p class="text-red-400 text-sm col-span-7">${escHtml(data.error)}</p>`;
+          document.getElementById('pnl-month-total').textContent = '';
+          return;
+        }
+        renderPnlGrid(data.pnl || {});
+      } catch (e) {
+        grid.innerHTML = '<p class="text-red-400 text-sm col-span-7">Failed to load P&L.</p>';
+      }
+    }
+
+    function renderPnlGrid(pnlByDate) {
+      const grid = document.getElementById('pnl-grid');
+      const firstWeekday = new Date(Date.UTC(pnlYear, pnlMonth - 1, 1)).getUTCDay();
+      const daysInMonth = new Date(Date.UTC(pnlYear, pnlMonth, 0)).getUTCDate();
+
+      let html = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat']
+        .map(d => `<div class="text-xs text-gray-500 text-center font-medium pb-1">${d}</div>`).join('');
+      for (let i = 0; i < firstWeekday; i++) html += '<div></div>';
+
+      let monthTotal = 0;
+      for (let day = 1; day <= daysInMonth; day++) {
+        const dateStr = `${pnlYear}-${String(pnlMonth).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+        const pnl = pnlByDate[dateStr];
+        let cellClass = 'bg-gray-800/40 border-gray-800';
+        let pnlHtml = '';
+        if (pnl !== undefined) {
+          monthTotal += pnl;
+          const positive = pnl >= 0;
+          cellClass = positive ? 'bg-green-950 border-green-900' : 'bg-red-950 border-red-900';
+          pnlHtml = `<div class="text-xs font-medium ${positive ? 'text-green-400' : 'text-red-400'}">${positive ? '+' : ''}$${pnl.toFixed(0)}</div>`;
+        }
+        html += `
+          <div class="border rounded-lg p-2 h-16 flex flex-col justify-between ${cellClass}">
+            <span class="text-xs text-gray-500">${day}</span>
+            ${pnlHtml}
+          </div>`;
+      }
+      grid.innerHTML = html;
+
+      const totalEl = document.getElementById('pnl-month-total');
+      totalEl.textContent = `${monthTotal >= 0 ? '+' : ''}$${monthTotal.toFixed(2)}`;
+      totalEl.className = `text-sm font-semibold ml-2 ${monthTotal >= 0 ? 'text-green-400' : 'text-red-400'}`;
+    }
+
+    // -----------------------------------------------------------------------
     // Init
     // -----------------------------------------------------------------------
     refreshStatus();
     loadPositions();
+    initPnlCalendar();
     setInterval(refreshStatus, 5000);
     setInterval(loadPositions, 30000);
   </script>

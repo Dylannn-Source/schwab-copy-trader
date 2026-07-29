@@ -147,6 +147,30 @@ class CopyTrader:
             })
         return result
 
+    def get_daily_pnl(self, account_hash: str, start: datetime, end: datetime) -> dict[str, float]:
+        """Realized P&L per calendar day, derived from trade cash flow.
+
+        Sums each TRADE transaction's netAmount (negative for opening debits,
+        positive for closing credits) by tradeDate. For a strategy that opens
+        and closes same-day, this equals the day's realized P&L. A position
+        held open past that day would show as a cash-flow debit on the day
+        it was opened rather than a loss, since there's no mark-to-market
+        component here — only closed cash flow.
+        """
+        resp = self.client.get_transactions(
+            account_hash,
+            start_date=start,
+            end_date=end,
+            transaction_types=Client.Transactions.TransactionType.TRADE,
+        )
+        resp.raise_for_status()
+        daily: dict[str, float] = collections.defaultdict(float)
+        for txn in resp.json():
+            trade_date = str(txn.get("tradeDate", ""))[:10]
+            if trade_date:
+                daily[trade_date] += txn.get("netAmount", 0)
+        return dict(daily)
+
     # ------------------------------------------------------------------
     # Poll loop
     # ------------------------------------------------------------------
