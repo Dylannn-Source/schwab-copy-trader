@@ -81,6 +81,16 @@
 
     {% if config.get('app_key') and config.get('app_secret') and config.get('redirect_uri') %}
       <section class="bg-gray-900 rounded-xl border border-gray-800 p-5">
+        {% if token_status %}
+          <p class="text-sm mb-3 {{ 'text-red-400' if token_status.expired else ('text-yellow-400' if token_status.warning else 'text-gray-400') }}">
+            {% if token_status.expired %}
+              Your Schwab session has expired — reconnect below to resume trading.
+            {% else %}
+              Schwab session expires in ~{{ '%.1f'|format(token_status.days_remaining) }} day(s)
+              (Schwab refresh tokens are only valid for {{ refresh_token_lifetime_days }} days, regardless of activity).
+            {% endif %}
+          </p>
+        {% endif %}
         <a href="/auth/connect"
            class="inline-block text-sm bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-lg transition-colors">
           Connect / Reconnect Schwab

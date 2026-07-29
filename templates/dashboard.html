@@ -27,6 +27,8 @@
     </div>
   </header>
 
+  <div id="token-banner" class="hidden px-6 py-2.5 text-sm text-center"></div>
+
   <main class="max-w-7xl mx-auto px-6 py-6 space-y-6">
 
     <!-- Controls -->
@@ -159,6 +161,24 @@
 
       // Log
       renderLog(data.log);
+
+      // Schwab reauthentication banner
+      renderTokenBanner(data.token_status);
+    }
+
+    function renderTokenBanner(status) {
+      const banner = document.getElementById('token-banner');
+      if (!status || (!status.expired && !status.warning)) {
+        banner.classList.add('hidden');
+        return;
+      }
+      const days = Math.max(0, status.days_remaining).toFixed(1);
+      banner.className = `px-6 py-2.5 text-sm text-center ${
+        status.expired ? 'bg-red-950 text-red-300' : 'bg-yellow-950 text-yellow-300'
+      }`;
+      banner.innerHTML = status.expired
+        ? `Your Schwab session has expired — trades will fail until you <a href="/settings" class="underline font-medium">reconnect</a>.`
+        : `Your Schwab session expires in ~${days} day${days == 1 ? '' : 's'} — <a href="/settings" class="underline font-medium">reconnect</a> soon to avoid interruption.`;
     }
 
     function renderLog(entries) {

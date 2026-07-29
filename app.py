@@ -3,6 +3,7 @@ import logging
 import os
 import threading
 import time
+from datetime import datetime, timedelta, timezone
 from functools import wraps
 from pathlib import Path
 
@@ -23,6 +24,12 @@ logging.basicConfig(
 
 SCHWAB_AUTH_URL = "https://api.schwabapi.com/v1/oauth/authorize"
 SCHWAB_TOKEN_URL = "https://api.schwabapi.com/v1/oauth/token"
+
+# Schwab refresh tokens are only valid for 7 days regardless of activity —
+# after that, reauthenticating via the OAuth flow is required no matter how
+# recently the access token itself was refreshed.
+REFRESH_TOKEN_LIFETIME_DAYS = 7
+REAUTH_WARNING_DAYS = 2
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("SECRET_KEY", os.urandom(24))
@@ -80,6 +87,35 @@ def get_client():
         )
     except Exception as e:
         activity_log.append("ERROR", f"Failed to load Schwab client: {e}")
+        return None
+
+
+def get_token_status() -> dict | None:
+    """Report how close the saved Schwab token is to needing reauthentication.
+
+    schwab-py auto-refreshes the short-lived access token using the refresh
+    token, so this isn't detectable by asking the client — the refresh token
+    itself just stops working after 7 days with no advance signal from Schwab.
+    """
+    token_path = Path(config.get("token_path", "schwab_token.json"))
+    if not token_path.exists():
+        return None
+    try:
+        with open(token_path) as f:
+            data = json.load(f)
+        created = data.get("creation_timestamp")
+        if created is None:
+            return None
+        created_at = datetime.fromtimestamp(created, tz=timezone.utc)
+        expires_at = created_at + timedelta(days=REFRESH_TOKEN_LIFETIME_DAYS)
+        remaining = (expires_at - datetime.now(timezone.utc)).total_seconds() / 86400
+        return {
+            "expires_at": expires_at.isoformat(),
+            "days_remaining": round(remaining, 2),
+            "expired": remaining <= 0,
+            "warning": remaining <= REAUTH_WARNING_DAYS,
+        }
+    except Exception:
         return None
 
 
@@ -221,6 +257,8 @@ def settings():
         error=error,
         has_secret=bool(config.get("app_secret")),
         trader_ready=get_trader() is not None,
+        token_status=get_token_status(),
+        refresh_token_lifetime_days=REFRESH_TOKEN_LIFETIME_DAYS,
     )
 
 
@@ -253,6 +291,7 @@ def api_status():
         "running": t.is_running() if t else False,
         "multiplier": t.multiplier if t else config.get("size_multiplier", 1.0),
         "log": activity_log.entries()[-100:],
+        "token_status": get_token_status(),
     })
 
 
