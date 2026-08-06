@@ -17,6 +17,7 @@ import asyncio
 import json
 import os
 import threading
+import time
 import webbrowser
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
@@ -109,26 +110,42 @@ class _CallbackServer:
         return self.result
 
 
+INITIAL_BACKOFF_SECONDS = 5
+MAX_BACKOFF_SECONDS = 120
+
+
 class RobinhoodMCPClient:
     def __init__(
         self,
         token_path: str | Path = "robinhood_mcp_token.json",
         server_url: str = DEFAULT_SERVER_URL,
         callback_port: int = DEFAULT_CALLBACK_PORT,
+        activity_log=None,
     ):
         self.server_url = server_url
         self.callback_port = callback_port
         self.storage = FileTokenStorage(token_path)
+        self.activity_log = activity_log
         self._loop: asyncio.AbstractEventLoop | None = None
         self._thread: threading.Thread | None = None
         self._session: ClientSession | None = None
         self._stop_event: asyncio.Event | None = None
         self._ready = threading.Event()
         self._error: Exception | None = None
+        self._stopping = False
+
+    def _log(self, level: str, message: str):
+        if self.activity_log:
+            self.activity_log.append(level, message)
+        else:
+            print(f"[{level}] {message}")
 
     def start(self, timeout: float = 300):
         """Connects and authenticates. Blocks until ready — on first run this
-        includes the time you spend approving access in your browser."""
+        includes the time you spend approving access in your browser. If the
+        connection later drops (network blip, server restart), reconnection is
+        retried automatically in the background with exponential backoff —
+        no need to call start() again."""
         self._thread = threading.Thread(target=self._run, daemon=True, name="robinhood-mcp")
         self._thread.start()
         if not self._ready.wait(timeout=timeout):
@@ -139,11 +156,28 @@ class RobinhoodMCPClient:
     def _run(self):
         self._loop = asyncio.new_event_loop()
         asyncio.set_event_loop(self._loop)
-        try:
-            self._loop.run_until_complete(self._connect_and_serve())
-        except Exception as e:
-            self._error = e
-            self._ready.set()
+        backoff = INITIAL_BACKOFF_SECONDS
+
+        while not self._stopping:
+            self._session = None
+            try:
+                self._loop.run_until_complete(self._connect_and_serve())
+                break  # _connect_and_serve only returns normally after a clean stop()
+            except Exception as e:
+                self._error = e
+                if not self._ready.is_set():
+                    # Never connected successfully even once — a hard failure
+                    # (bad config, auth denied). Surface it to start() and stop;
+                    # this isn't a transient drop worth retrying forever.
+                    self._ready.set()
+                    return
+                self._log("ERROR", f"Robinhood MCP connection lost: {e}")
+
+            if self._stopping:
+                break
+            self._log("WARNING", f"Reconnecting to Robinhood MCP in {backoff}s...")
+            time.sleep(backoff)
+            backoff = min(backoff * 2, MAX_BACKOFF_SECONDS)
 
     async def _connect_and_serve(self):
         # The whole connection lifetime — open, serve tool calls, close — has to
@@ -178,31 +212,36 @@ class RobinhoodMCPClient:
             callback_handler=callback_handler,
         )
 
-        try:
-            async with httpx2.AsyncClient(auth=oauth_auth, follow_redirects=True, timeout=30) as http_client:
-                async with streamable_http_client(url=self.server_url, http_client=http_client) as (
-                    read_stream,
-                    write_stream,
-                ):
-                    async with ClientSession(read_stream, write_stream) as session:
-                        self._session = session
-                        await session.initialize()
-                        self._ready.set()
-                        await self._stop_event.wait()
-        except Exception as e:
-            self._error = e
-            self._ready.set()
+        # Deliberately not caught here — exceptions propagate up to _run(),
+        # which is what decides whether to retry or give up.
+        async with httpx2.AsyncClient(auth=oauth_auth, follow_redirects=True, timeout=30) as http_client:
+            async with streamable_http_client(url=self.server_url, http_client=http_client) as (
+                read_stream,
+                write_stream,
+            ):
+                async with ClientSession(read_stream, write_stream) as session:
+                    self._session = session
+                    await session.initialize()
+                    was_ready = self._ready.is_set()
+                    self._ready.set()
+                    if was_ready:
+                        self._log("INFO", "Reconnected to Robinhood MCP.")
+                    await self._stop_event.wait()
 
     def list_tools(self):
-        assert self._session is not None and self._loop is not None, "call start() first"
+        if self._session is None:
+            raise RuntimeError("Not currently connected to Robinhood MCP (reconnecting in the background).")
         return asyncio.run_coroutine_threadsafe(self._session.list_tools(), self._loop).result(timeout=30)
 
     def call_tool(self, name: str, arguments: dict):
-        assert self._session is not None and self._loop is not None, "call start() first"
+        if self._session is None:
+            raise RuntimeError("Not currently connected to Robinhood MCP (reconnecting in the background).")
         return asyncio.run_coroutine_threadsafe(self._session.call_tool(name, arguments), self._loop).result(timeout=60)
 
     def stop(self):
+        self._stopping = True
         if not self._loop or not self._thread or not self._thread.is_alive():
             return
-        self._loop.call_soon_threadsafe(self._stop_event.set)
+        if self._stop_event:
+            self._loop.call_soon_threadsafe(self._stop_event.set)
         self._thread.join(timeout=10)

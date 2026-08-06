@@ -37,7 +37,10 @@ def build_executor(config: dict, activity_log):
     from robinhood_mcp_client import RobinhoodMCPClient
 
     activity_log.append("WARNING", "live_trading is ON — real orders will be placed on Robinhood.")
-    rh_client = RobinhoodMCPClient(token_path=config.get("robinhood_mcp_token_path", "robinhood_mcp_token.json"))
+    rh_client = RobinhoodMCPClient(
+        token_path=config.get("robinhood_mcp_token_path", "robinhood_mcp_token.json"),
+        activity_log=activity_log,
+    )
     print("Connecting to Robinhood's Agentic Trading MCP server...")
     rh_client.start()
     print("Connected.")

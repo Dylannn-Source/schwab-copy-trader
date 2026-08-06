@@ -61,6 +61,7 @@ class DiscordCopyTrader:
             token=config["discord_user_token"],
             channel_id=config["discord_alert_channel_id"],
             on_message=self._handle_message,
+            activity_log=activity_log,
         )
 
     def start(self):
