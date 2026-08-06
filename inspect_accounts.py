@@ -15,7 +15,7 @@ def main():
     client.start()
     result = client.call_tool("get_accounts", {})
     print("=== structuredContent ===")
-    print(json.dumps(result.structuredContent, indent=2) if result.structuredContent else "(none)")
+    print(json.dumps(result.structured_content, indent=2) if result.structured_content else "(none)")
     print("\n=== content ===")
     for block in result.content:
         print(block)
