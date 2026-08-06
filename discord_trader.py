@@ -22,6 +22,7 @@ class OrderExecutor(Protocol):
     def buy_to_open(self, event: AlertEvent, quantity: int) -> None: ...
     def sell_to_open(self, event: AlertEvent, quantity: int) -> None: ...
     def sell_to_close(self, event: AlertEvent, quantity: int) -> None: ...
+    def buy_to_close(self, event: AlertEvent, quantity: int) -> None: ...
     def buy_equity(self, event: AlertEvent, shares: int) -> None: ...
 
 
@@ -42,6 +43,9 @@ class DryRunExecutor:
 
     def sell_to_close(self, event, quantity):
         self.log.append("INFO", f"[DRY RUN] SELL_TO_CLOSE {quantity}x {self._leg(event)} (alert price {event.price})")
+
+    def buy_to_close(self, event, quantity):
+        self.log.append("INFO", f"[DRY RUN] BUY_TO_CLOSE {quantity}x {self._leg(event)} (alert price {event.price})")
 
     def buy_equity(self, event, shares):
         self.log.append("INFO", f"[DRY RUN] BUY {shares}x {event.symbol} shares (alert price {event.price})")
@@ -88,30 +92,35 @@ class DiscordCopyTrader:
         key = event.position_key()
 
         if event.action == "OPEN_LONG_OPTION":
-            self._handle_open(event, key, self.executor.buy_to_open)
+            self._handle_open(event, key, "LONG", self.executor.buy_to_open)
         elif event.action in ("OPEN_SHORT_PUT", "OPEN_SHORT_CALL"):
-            self._handle_open(event, key, self.executor.sell_to_open)
+            self._handle_open(event, key, "SHORT", self.executor.sell_to_open)
         elif event.action == "OPEN_EQUITY":
             if event.quantity is None:
                 self.log.append("WARNING", f"Small-account equity buy with no share count found, skipped: {event.raw_line!r}")
                 return
             self.executor.buy_equity(event, event.quantity)
         elif event.action == "CLOSE_PARTIAL":
-            qty = self.ledger.close_partial(key, event.close_num, event.close_den)
-            if qty <= 0:
-                self.log.append("WARNING", f"Partial close with nothing tracked, skipped: {event.raw_line!r}")
-                return
-            self.executor.sell_to_close(event, qty)
+            qty, side = self.ledger.close_partial(key, event.close_num, event.close_den)
+            self._handle_close(event, qty, side)
         elif event.action == "CLOSE_ALL":
-            qty = self.ledger.close_all(key)
-            if not qty:
-                self.log.append("WARNING", f"ALL OUT with no tracked position, skipped: {event.raw_line!r}")
-                return
-            self.executor.sell_to_close(event, qty)
+            qty, side = self.ledger.close_all(key)
+            self._handle_close(event, qty, side)
 
-    def _handle_open(self, event: AlertEvent, key: tuple, place_order):
+    def _handle_open(self, event: AlertEvent, key: tuple, side: str, place_order):
         if event.quantity is None:
             self.log.append("WARNING", f"Small-account open with no quantity found, skipped: {event.raw_line!r}")
             return
-        self.ledger.open(key, event.quantity)
+        self.ledger.open(key, event.quantity, side)
         place_order(event, event.quantity)
+
+    def _handle_close(self, event: AlertEvent, qty: int | None, side: str | None):
+        if not qty:
+            self.log.append("WARNING", f"Close with nothing tracked, skipped: {event.raw_line!r}")
+            return
+        if side == "SHORT":
+            self.executor.buy_to_close(event, qty)
+        else:
+            # Default to LONG's sell-to-close — matches every position we
+            # actually track opens for (side should never be unset here).
+            self.executor.sell_to_close(event, qty)
