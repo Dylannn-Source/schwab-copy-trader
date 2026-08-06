@@ -18,7 +18,6 @@ import json
 import os
 import threading
 import webbrowser
-from contextlib import AsyncExitStack
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
@@ -123,7 +122,7 @@ class RobinhoodMCPClient:
         self._loop: asyncio.AbstractEventLoop | None = None
         self._thread: threading.Thread | None = None
         self._session: ClientSession | None = None
-        self._stack: AsyncExitStack | None = None
+        self._stop_event: asyncio.Event | None = None
         self._ready = threading.Event()
         self._error: Exception | None = None
 
@@ -141,14 +140,21 @@ class RobinhoodMCPClient:
         self._loop = asyncio.new_event_loop()
         asyncio.set_event_loop(self._loop)
         try:
-            self._loop.run_until_complete(self._connect())
-            self._ready.set()
-            self._loop.run_forever()
+            self._loop.run_until_complete(self._connect_and_serve())
         except Exception as e:
             self._error = e
             self._ready.set()
 
-    async def _connect(self):
+    async def _connect_and_serve(self):
+        # The whole connection lifetime — open, serve tool calls, close — has to
+        # run as a single asyncio Task. streamable_http_client's internal task
+        # group ties its cancel scope to whichever Task entered it; closing it
+        # from a different Task (e.g. one spun up later by
+        # run_coroutine_threadsafe for a separate stop() call) raises
+        # "Attempted to exit cancel scope in a different task than it was
+        # entered in". Blocking on self._stop_event here, inside the same
+        # `async with`, keeps entry and exit in that one Task.
+        self._stop_event = asyncio.Event()
         callback_server = _CallbackServer(self.callback_port)
 
         async def redirect_handler(authorization_url: str) -> None:
@@ -172,14 +178,20 @@ class RobinhoodMCPClient:
             callback_handler=callback_handler,
         )
 
-        http_client = httpx2.AsyncClient(auth=oauth_auth, follow_redirects=True, timeout=30)
-        self._stack = AsyncExitStack()
-        await self._stack.enter_async_context(http_client)
-        read_stream, write_stream = await self._stack.enter_async_context(
-            streamable_http_client(url=self.server_url, http_client=http_client)
-        )
-        self._session = await self._stack.enter_async_context(ClientSession(read_stream, write_stream))
-        await self._session.initialize()
+        try:
+            async with httpx2.AsyncClient(auth=oauth_auth, follow_redirects=True, timeout=30) as http_client:
+                async with streamable_http_client(url=self.server_url, http_client=http_client) as (
+                    read_stream,
+                    write_stream,
+                ):
+                    async with ClientSession(read_stream, write_stream) as session:
+                        self._session = session
+                        await session.initialize()
+                        self._ready.set()
+                        await self._stop_event.wait()
+        except Exception as e:
+            self._error = e
+            self._ready.set()
 
     def list_tools(self):
         assert self._session is not None and self._loop is not None, "call start() first"
@@ -190,12 +202,7 @@ class RobinhoodMCPClient:
         return asyncio.run_coroutine_threadsafe(self._session.call_tool(name, arguments), self._loop).result(timeout=60)
 
     def stop(self):
-        if not self._loop or not self._loop.is_running():
+        if not self._loop or not self._thread or not self._thread.is_alive():
             return
-
-        async def _close():
-            if self._stack:
-                await self._stack.aclose()
-
-        asyncio.run_coroutine_threadsafe(_close(), self._loop).result(timeout=10)
-        self._loop.call_soon_threadsafe(self._loop.stop)
+        self._loop.call_soon_threadsafe(self._stop_event.set)
+        self._thread.join(timeout=10)
