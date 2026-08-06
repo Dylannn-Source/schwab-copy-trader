@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Settings — Discord → Robinhood Copy Trader</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-950 text-gray-100 min-h-screen">
+
+  <header class="bg-gray-900 border-b border-gray-800 px-6 py-4 flex items-center justify-between">
+    <h1 class="text-lg font-bold tracking-tight">Settings</h1>
+    <a href="/" class="text-sm text-gray-500 hover:text-gray-300 transition-colors">← Dashboard</a>
+  </header>
+
+  <main class="max-w-xl mx-auto px-6 py-6">
+    {% if error %}
+      <div class="bg-red-950 border border-red-900 text-red-300 text-sm rounded-lg px-4 py-3 mb-5">
+        {{ error }}
+      </div>
+    {% endif %}
+
+    <form method="post" class="bg-gray-900 rounded-xl border border-gray-800 p-6 space-y-5">
+
+      <div>
+        <label class="block text-sm text-gray-400 mb-1">Discord user token</label>
+        <input type="password" name="discord_user_token"
+          placeholder="{{ 'Already set — leave blank to keep it' if has_token else 'Paste your Discord token' }}"
+          class="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2.5 text-sm text-white
+                 focus:outline-none focus:border-blue-500">
+        <p class="text-xs text-gray-500 mt-1">This is a live credential — treat it like a password.</p>
+      </div>
+
+      <div>
+        <label class="block text-sm text-gray-400 mb-1">Discord alert channel ID</label>
+        <input type="text" name="discord_alert_channel_id" value="{{ config.get('discord_alert_channel_id', '') }}"
+          class="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2.5 text-sm text-white
+                 focus:outline-none focus:border-blue-500">
+      </div>
+
+      <div>
+        <label class="block text-sm text-gray-400 mb-1">Robinhood agentic account number</label>
+        <input type="text" name="robinhood_account_number" value="{{ config.get('robinhood_account_number', '') }}"
+          class="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2.5 text-sm text-white
+                 focus:outline-none focus:border-blue-500">
+      </div>
+
+      <div class="flex items-center gap-3">
+        <input type="checkbox" id="live_trading" name="live_trading"
+          {{ 'checked' if config.get('live_trading') else '' }}
+          class="w-4 h-4 rounded border-gray-700 bg-gray-800">
+        <label for="live_trading" class="text-sm text-gray-300">
+          Live trading — <span class="text-red-400 font-medium">places real orders</span> on Robinhood
+        </label>
+      </div>
+
+      <div>
+        <label class="block text-sm text-gray-400 mb-1">Dashboard password</label>
+        <input type="password" name="dashboard_password"
+          placeholder="Leave blank to keep current password"
+          class="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2.5 text-sm text-white
+                 focus:outline-none focus:border-blue-500">
+      </div>
+
+      <button type="submit"
+        class="w-full bg-blue-600 hover:bg-blue-500 text-white font-medium rounded-lg py-2.5 transition-colors">
+        Save
+      </button>
+      <p class="text-xs text-gray-500 text-center">Saving stops and rebuilds the trader — it restarts automatically if it was running.</p>
+    </form>
+  </main>
+</body>
+</html>
