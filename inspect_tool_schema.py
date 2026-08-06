@@ -24,7 +24,7 @@ def main():
     for tool in result.tools:
         if tool.name in TOOLS_OF_INTEREST:
             print(f"=== {tool.name} ===")
-            print(json.dumps(tool.inputSchema, indent=2))
+            print(json.dumps(tool.input_schema, indent=2))
             print()
     client.stop()
 
