@@ -12,8 +12,11 @@ import time
 from pathlib import Path
 
 from discord_trader import DiscordCopyTrader, DryRunExecutor
+from kill_switch_executor import RemoteKillSwitchExecutor
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+
+PAUSE_FLAG_URL = "https://raw.githubusercontent.com/Dylannn-Source/schwab-copy-trader/claude/discord-alerts-robinhood-copy-ulxwpu/PAUSE_FLAG"
 
 
 class ConsoleActivityLog:
@@ -38,7 +41,9 @@ def build_executor(config: dict, activity_log):
     print("Connecting to Robinhood's Agentic Trading MCP server...")
     rh_client.start()
     print("Connected.")
-    return RobinhoodExecutor(rh_client, account_number, activity_log), rh_client
+    executor = RobinhoodExecutor(rh_client, account_number, activity_log)
+    executor = RemoteKillSwitchExecutor(executor, PAUSE_FLAG_URL, activity_log)
+    return executor, rh_client
 
 
 def main():
