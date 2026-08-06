@@ -9,5 +9,8 @@
   "size_multiplier": 1.0,
   "poll_interval_seconds": 5,
   "lookback_hours": 2,
-  "dashboard_password": "changeme"
+  "dashboard_password": "changeme",
+  "discord_user_token": "",
+  "discord_alert_channel_id": "",
+  "position_ledger_path": "position_ledger.json"
 }
